@@ -18,10 +18,24 @@ export const DEFAULT_AGENT_MCP_HOME = path.join(os.homedir(), ".agent-cli", "mcp
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const MAX_SEARCH_LIMIT = 20;
+const MAX_SEARCH_DESCRIPTION_CHARS = 320;
 const MAX_BINARY_RESOURCE_BYTES = 20 * 1024 * 1024;
 const TOOL_NAME_SUFFIX = "_mcp";
 const SAFE_SERVER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const SAFE_TOOL_NAME = /^[A-Za-z0-9_.:/-]{1,256}$/;
+const SEARCH_SYNONYM_GROUPS = [
+  ["profile", "画像", "概况", "概览", "详情", "档案", "商品信息", "产品信息", "基础信息"],
+  ["product", "listing", "asin", "商品", "产品"],
+  ["keyword", "query", "关键词", "搜索词"],
+  ["competitor", "competition", "竞品", "竞争对手", "竞争"],
+  ["discover", "discovery", "find", "search", "发现", "查找", "寻找"],
+  ["traffic", "流量"],
+  ["sales", "sale", "销量", "销售"],
+  ["advertising", "advertisement", "ads", "ad", "广告"],
+  ["trend", "history", "historical", "趋势", "历史"],
+  ["market", "市场"],
+  ["campaign", "广告活动", "活动"]
+];
 
 export class AgentMcpError extends Error {
   constructor(code, message, details = {}) {
@@ -313,7 +327,7 @@ export class AgentMcp {
   }
 
   async _search(serverId, input, context) {
-    const query = requireNonEmptyString(input.query, "search 需要 query。").toLowerCase();
+    const query = requireNonEmptyString(input.query, "search 需要 query。");
     const limit = normalizeLimit(input.limit);
     const kinds = normalizeSearchKinds(input.kind);
     const [tools, resources, templates] = await Promise.all([
@@ -321,16 +335,21 @@ export class AgentMcp {
       kinds.has("resource") ? this._listResources(serverId, context.signal) : [],
       kinds.has("resource_template") ? this._listResourceTemplates(serverId, context.signal) : []
     ]);
-    const matches = [
-      ...tools.map((item) => summarizeTool(item)),
-      ...resources.map((item) => summarizeResource(item)),
-      ...templates.map((item) => summarizeResourceTemplate(item))
-    ].filter((item) => searchableText(item).includes(query)).slice(0, limit);
+    const ranked = rankSearchCandidates([
+      ...tools.map((item) => createSearchCandidate("tool", item)),
+      ...resources.map((item) => createSearchCandidate("resource", item)),
+      ...templates.map((item) => createSearchCandidate("resource_template", item))
+    ], query);
+    const matches = ranked.slice(0, limit).map(({ summary, relevance }) => ({
+      ...summary,
+      relevance
+    }));
     return completedResult({
       action: "search",
       serverId,
       query: input.query,
-      total: matches.length,
+      total: ranked.length,
+      returned: matches.length,
       results: matches
     });
   }
@@ -644,8 +663,11 @@ function summarizeTool(tool) {
   return {
     kind: "tool",
     name: tool.name,
-    description: optionalString(tool.description) ?? "",
-    title: optionalString(tool.title)
+    description: compactCapabilityDescription(tool.description),
+    title: optionalString(tool.title),
+    requiredArguments: Array.isArray(tool.inputSchema?.required)
+      ? tool.inputSchema.required.filter((item) => typeof item === "string")
+      : []
   };
 }
 
@@ -653,7 +675,7 @@ function summarizeResource(resource) {
   return {
     kind: "resource",
     name: optionalString(resource.name) ?? optionalString(resource.uri) ?? "resource",
-    description: optionalString(resource.description) ?? "",
+    description: compactCapabilityDescription(resource.description),
     uri: optionalString(resource.uri),
     mimeType: optionalString(resource.mimeType)
   };
@@ -663,14 +685,176 @@ function summarizeResourceTemplate(template) {
   return {
     kind: "resource_template",
     name: optionalString(template.name) ?? optionalString(template.uriTemplate) ?? "resource-template",
-    description: optionalString(template.description) ?? "",
+    description: compactCapabilityDescription(template.description),
     uriTemplate: optionalString(template.uriTemplate),
     mimeType: optionalString(template.mimeType)
   };
 }
 
-function searchableText(value) {
-  return Object.values(value).filter((item) => typeof item === "string").join(" ").toLowerCase();
+/**
+ * 为远端能力构造“轻量返回 + 完整检索文本”双层结构。
+ *
+ * 搜索可以利用完整说明和参数名提高召回率，但模型只会收到压缩后的摘要，
+ * 避免 SIF 一类服务在 description 中附带的大段输出规范撑爆 tool result。
+ */
+function createSearchCandidate(kind, source) {
+  const summary = kind === "tool"
+    ? summarizeTool(source)
+    : kind === "resource"
+      ? summarizeResource(source)
+      : summarizeResourceTemplate(source);
+  const inputPropertyNames = kind === "tool" && source.inputSchema?.properties
+    ? Object.keys(source.inputSchema.properties)
+    : [];
+  return {
+    summary,
+    nameText: [
+      summary.name,
+      summary.title,
+      kind,
+      ...inputPropertyNames
+    ].filter(Boolean).join(" "),
+    summaryText: summary.description,
+    fullText: [
+      searchableCapabilityDescription(source.description),
+      source.uri,
+      source.uriTemplate,
+      ...inputPropertyNames
+    ].filter((item) => typeof item === "string").join(" ")
+  };
+}
+
+/**
+ * 对中英文混合查询进行相关度排序。
+ *
+ * 工具名和短功能摘要权重最高，完整远端说明只作为低权重召回来源；
+ * 中文连续文本额外生成二至四字片段，因此“商品画像”可以命中
+ * “查询一个或多个 ASIN 的基础画像”，不要求整句连续出现。
+ */
+function rankSearchCandidates(candidates, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  const directTerms = createSearchTerms(query);
+  const expandedTerms = expandSearchTerms(query, directTerms);
+  const queryTerms = [
+    ...directTerms.map((term) => ({ term, weight: 1 })),
+    ...expandedTerms.map((term) => ({ term, weight: 0.65 }))
+  ];
+  return candidates
+    .map((candidate, index) => {
+      const nameText = normalizeSearchText(candidate.nameText);
+      const summaryText = normalizeSearchText(candidate.summaryText);
+      const fullText = normalizeSearchText(candidate.fullText);
+      const nameTerms = new Set(createSearchTerms(candidate.nameText));
+      let score = 0;
+      let matched = 0;
+      const matchedNameTerms = new Set();
+
+      if (normalizedQuery && nameText.includes(normalizedQuery)) score += 160;
+      if (normalizedQuery && summaryText.includes(normalizedQuery)) score += 100;
+      if (normalizedQuery && fullText.includes(normalizedQuery)) score += 20;
+
+      for (const { term, weight } of queryTerms) {
+        if (nameTerms.has(term)) {
+          score += (term.length >= 4 ? 36 : 24) * weight;
+          matched += 1;
+          matchedNameTerms.add(term);
+          continue;
+        }
+        if (nameText.includes(term)) {
+          score += (term.length >= 4 ? 28 : 18) * weight;
+          matched += 1;
+          matchedNameTerms.add(term);
+          continue;
+        }
+        if (summaryText.includes(term)) {
+          score += (term.length >= 4 ? 16 : 10) * weight;
+          matched += 1;
+          continue;
+        }
+        if (fullText.includes(term)) {
+          score += (term.length >= 4 ? 4 : 2) * weight;
+          matched += 1;
+        }
+      }
+      // 同样命中两个意图词时，名称更短、更聚焦的能力优先于附带更多限定词的能力。
+      const nameDensity = nameTerms.size > 0 ? matchedNameTerms.size / nameTerms.size : 0;
+      score += nameDensity * 60;
+      return {
+        ...candidate,
+        relevance: Math.round((score + Math.min(matched, 10)) * 100) / 100,
+        index
+      };
+    })
+    .filter((candidate) => candidate.relevance > 0)
+    .sort((left, right) => right.relevance - left.relevance || left.index - right.index);
+}
+
+function expandSearchTerms(query, directTerms) {
+  const normalizedQuery = normalizeSearchText(query);
+  const direct = new Set(directTerms);
+  const expanded = new Set();
+  for (const group of SEARCH_SYNONYM_GROUPS) {
+    const matched = group.some((alias) => {
+      const normalizedAlias = normalizeSearchText(alias);
+      return direct.has(normalizedAlias) || normalizedQuery.includes(normalizedAlias);
+    });
+    if (!matched) continue;
+    for (const alias of group) {
+      for (const term of createSearchTerms(alias)) {
+        if (!direct.has(term)) expanded.add(term);
+      }
+    }
+  }
+  return [...expanded];
+}
+
+function createSearchTerms(value) {
+  const normalized = normalizeSearchText(value);
+  const terms = new Set();
+  for (const token of normalized.match(/[a-z0-9]+|[\p{Script=Han}]+/gu) ?? []) {
+    terms.add(token);
+    if (!/^\p{Script=Han}+$/u.test(token)) continue;
+    for (let size = 2; size <= Math.min(4, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        terms.add(token.slice(index, index + size));
+      }
+    }
+  }
+  return [...terms].filter((term) => term.length >= 2);
+}
+
+function normalizeSearchText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFKC")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[_./:|-]+/g, " ")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * 优先抽取服务说明中的“功能”段，去掉通用输出规范和后续参数细节。
+ */
+function compactCapabilityDescription(value) {
+  const raw = searchableCapabilityDescription(value);
+  if (!raw) return "";
+  let selected = raw;
+  const endMatch = /\n\s*(?:触发时机|入参|返回|注意|NEXT_STEP)[：:]/u.exec(raw);
+  if (endMatch) selected = raw.slice(0, endMatch.index);
+  const compact = selected.replace(/\s+/g, " ").trim();
+  if (compact.length <= MAX_SEARCH_DESCRIPTION_CHARS) return compact;
+  return `${compact.slice(0, MAX_SEARCH_DESCRIPTION_CHARS - 1).trimEnd()}…`;
+}
+
+function searchableCapabilityDescription(value) {
+  const raw = optionalString(value)?.replaceAll("\r", "") ?? "";
+  if (!raw) return "";
+  const featureMatch = /(?:^|\n)\s*功能[：:]\s*/u.exec(raw);
+  if (!featureMatch) return raw;
+  return raw.slice(featureMatch.index + featureMatch[0].length);
 }
 
 function createTraceContext(context = {}) {
