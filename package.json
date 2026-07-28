@@ -1,0 +1,40 @@
+{
+  "name": "@xuanzhen-tech/agent-mcp-brick",
+  "version": "0.1.0",
+  "description": "通用 MCP 服务注册、渐进式发现与 AgentTool Provider 能力积木。",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xuanzhen-tech/agent-mcp-brick.git"
+  },
+  "homepage": "https://github.com/xuanzhen-tech/agent-mcp-brick#readme",
+  "bugs": {
+    "url": "https://github.com/xuanzhen-tech/agent-mcp-brick/issues"
+  },
+  "exports": "./src/index.mjs",
+  "files": [
+    "src/index.mjs",
+    "src/brick-definition.mjs",
+    "src/main",
+    "docs"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build:artifact": "node src/scripts/build-artifact.mjs",
+    "create:descriptor": "node src/scripts/create-descriptor.mjs",
+    "pack:dry-run": "npm pack --dry-run",
+    "publish:artifact": "node src/scripts/publish-artifact.mjs",
+    "publish:artifact:placeholder": "node src/scripts/publish-artifact-placeholder.mjs",
+    "publish:npm": "npm publish",
+    "release:local": "npm run smoke:contract && npm run smoke:mcp && npm run build:artifact && npm run create:descriptor && npm run publish:artifact:placeholder && npm run verify && npm run pack:dry-run",
+    "smoke:contract": "node src/scripts/smoke-contract.mjs",
+    "smoke:mcp": "node src/scripts/smoke-mcp.mjs",
+    "smoke:integration": "node scripts/smoke-agent-integration.mjs",
+    "verify": "node src/scripts/verify.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
