@@ -31,12 +31,35 @@ try {
   assert.equal(mcp.toolDescriptors[0].schema.function.parameters.properties.action.enum.includes("read"), true);
 
   const help = await mcp.execute("sif_mcp", { action: "help" }, { workspace });
-  assert.equal(help.details.capabilities.tools, 3);
+  assert.equal(help.details.capabilities.tools, 4);
   assert.equal(help.details.server.instructions, "先搜索，再查看参数，最后调用。");
   assert.equal(JSON.stringify(help).includes("inputSchema"), false);
 
   const search = await mcp.execute("sif_mcp", { action: "search", query: "keyword" }, { workspace });
   assert.equal(search.details.results.some((item) => item.name === "keyword-research"), true);
+  const profileSearch = await mcp.execute("sif_mcp", {
+    action: "search",
+    query: "ASIN商品画像 product profile",
+    kind: "tool"
+  }, { workspace });
+  assert.equal(profileSearch.details.results[0].name, "market_get_asin_profile");
+  assert.equal(profileSearch.details.results[0].description, "查询一个或多个 ASIN 的基础商品画像。");
+  assert.deepEqual(profileSearch.details.results[0].requiredArguments, ["asins"]);
+  assert.equal(profileSearch.details.results[0].description.length < 100, true);
+  assert.equal(JSON.stringify(profileSearch).includes("输出格式铁律"), false);
+  assert.equal(profileSearch.details.returned <= 20, true);
+  const chineseProfileSearch = await mcp.execute("sif_mcp", {
+    action: "search",
+    query: "商品画像",
+    kind: "tool"
+  }, { workspace });
+  assert.equal(chineseProfileSearch.details.results[0].name, "market_get_asin_profile");
+  const productInfoSearch = await mcp.execute("sif_mcp", {
+    action: "search",
+    query: "亚马逊商品信息查询",
+    kind: "tool"
+  }, { workspace });
+  assert.equal(productInfoSearch.details.results[0].name, "market_get_asin_profile");
   const describe = await mcp.execute("sif_mcp", { action: "describe", kind: "tool", name: "keyword-research" }, { workspace });
   assert.equal(describe.details.capability.inputSchema.required.includes("keyword"), true);
 
@@ -128,6 +151,23 @@ async function startGatewayFixture() {
     }
     if (request.method === "GET" && url.pathname === "/api/mcp/servers/sif/tools") {
       return send({ tools: [
+        {
+          name: "market_get_asin_profile",
+          description: [
+            "【输出格式铁律】这是一段不应该进入搜索结果的通用输出规范。".repeat(40),
+            "功能：查询一个或多个 ASIN 的基础商品画像。",
+            "触发时机：用户需要商品价格、评分和规格时使用。",
+            "入参：asins、country。"
+          ].join("\n"),
+          inputSchema: {
+            type: "object",
+            properties: {
+              asins: { type: "array", items: { type: "string" } },
+              country: { type: "string" }
+            },
+            required: ["asins"]
+          }
+        },
         {
           name: "keyword-research",
           description: "Research keyword demand",
