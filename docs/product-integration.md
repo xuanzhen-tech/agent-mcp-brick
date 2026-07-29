@@ -52,6 +52,8 @@ const available = await agentMcp.listAvailableServers();
 const registrations = await agentMcp.listRegistrations();
 
 await agentMcp.register("sif");
+await agentMcp.register("sellersprite");
+await agentMcp.register("sorftime");
 await agentMcp.setEnabled("sif", false);
 await agentMcp.setEnabled("sif", true);
 await agentMcp.unregister("sif");

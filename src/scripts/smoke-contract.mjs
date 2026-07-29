@@ -17,7 +17,7 @@ import {
 
 assert.equal(brickDefinition.id, "agent-mcp");
 assert.equal(brickDefinition.kind, "capability");
-assert.equal(brickDefinition.version, "0.1.1");
+assert.equal(brickDefinition.version, "0.1.2");
 assert.equal(validateBrickDefinition(brickDefinition).ok, true);
 assert.equal(brickDefinition.runtimeDependencies.some((item) => item.type === "node-runtime" && item.required === true), true);
 
