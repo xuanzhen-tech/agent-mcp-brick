@@ -117,6 +117,27 @@ try {
   await second.dispose();
   await mcp.dispose();
 
+  // 同一个 AgentMcp 必须能同时管理多个 Gateway 服务，并为每个已启用服务
+  // 生成一个渐进式入口；单个服务的启停不能改变其它服务的模型工具。
+  const multiRegistryPath = path.join(root, "multi-home", "registry.json");
+  const multi = new AgentMcp({ gatewayBaseUrl: fixture.baseUrl, registryPath: multiRegistryPath });
+  await multi.initialize();
+  await multi.register("sif");
+  await multi.register("sellersprite");
+  await multi.register("sorftime");
+  assert.deepEqual(
+    multi.toolDescriptors.map((descriptor) => descriptor.name).sort(),
+    ["sellersprite_mcp", "sif_mcp", "sorftime_mcp"]
+  );
+  await multi.setEnabled("sellersprite", false);
+  assert.deepEqual(
+    multi.toolDescriptors.map((descriptor) => descriptor.name).sort(),
+    ["sif_mcp", "sorftime_mcp"]
+  );
+  await multi.unregister("sorftime");
+  assert.deepEqual(multi.toolDescriptors.map((descriptor) => descriptor.name), ["sif_mcp"]);
+  await multi.dispose();
+
   await fs.writeFile(registryPath, "{broken json", "utf8");
   const recovered = new AgentMcp({ gatewayBaseUrl: fixture.baseUrl, registryPath });
   await recovered.initialize();
@@ -141,7 +162,11 @@ async function startGatewayFixture() {
       response.end(JSON.stringify(value));
     };
     if (request.method === "GET" && url.pathname === "/api/mcp/servers") {
-      return send({ servers: [{ id: "sif", label: "SIF", description: "SIF MCP", enabled: true }] });
+      return send({ servers: [
+        { id: "sif", label: "SIF", description: "SIF MCP", enabled: true },
+        { id: "sellersprite", label: "SellerSprite", description: "SellerSprite MCP", enabled: true },
+        { id: "sorftime", label: "Sorftime", description: "Sorftime MCP", enabled: true }
+      ] });
     }
     if (request.method === "GET" && url.pathname === "/api/mcp/servers/sif/status") {
       return send({ server: { id: "sif", label: "SIF", instructions: "先搜索，再查看参数，最后调用。" } });

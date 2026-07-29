@@ -38,6 +38,8 @@ await agentMcp.initialize();
 
 // 该操作由产品设置页响应用户选择，不允许模型调用。
 await agentMcp.register("sif");
+await agentMcp.register("sellersprite");
+await agentMcp.register("sorftime");
 
 const agentTool = new AgentTool({
   toolProviders: [agentMcp]
@@ -59,6 +61,11 @@ const agentTool = new AgentTool({
 
 注册、启用、禁用或删除完成后，下一次读取 `agentTool.definitions` 会立即反映
 最新状态，不需要重建 `AgentTool` 或 `AgentCli`。
+
+每个服务始终只对应一个渐进式模型入口。当前 Gateway 配置 SIF、SellerSprite
+和 Sorftime 时，三个入口分别为 `sif_mcp`、`sellersprite_mcp` 和
+`sorftime_mcp`；远端数十个工具仍通过 `search → describe → call` 按需发现，
+不会一次性进入模型 tools schema。
 
 完整接入与职责说明见 [产品接入说明](docs/product-integration.md)。
 
