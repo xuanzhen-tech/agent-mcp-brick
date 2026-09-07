@@ -14,7 +14,7 @@ import {
 export const brickDefinition = createBrickDefinition({
   id: "agent-mcp",
   name: "Agent MCP",
-  version: "0.1.2",
+  version: "0.1.3",
   kind: "capability",
   description: "通用 MCP 服务注册、渐进式能力发现与 AgentTool Provider 积木。",
   entrypoints: [

@@ -134,6 +134,15 @@ try {
     multi.toolDescriptors.map((descriptor) => descriptor.name).sort(),
     ["sif_mcp", "sorftime_mcp"]
   );
+  fixture.setServerEnabled("sorftime", false);
+  await multi.listAvailableServers();
+  assert.deepEqual(multi.toolDescriptors.map((descriptor) => descriptor.name), ["sif_mcp"]);
+  await assert.rejects(
+    () => multi.execute("sorftime_mcp", { action: "help" }, { workspace }),
+    (error) => error instanceof AgentMcpError && error.code === "tool_unavailable"
+  );
+  fixture.setServerEnabled("sorftime", true);
+  await multi.listAvailableServers();
   await multi.unregister("sorftime");
   assert.deepEqual(multi.toolDescriptors.map((descriptor) => descriptor.name), ["sif_mcp"]);
   await multi.dispose();
@@ -154,6 +163,11 @@ try {
 
 async function startGatewayFixture() {
   let lastTrace;
+  const serverEnabled = new Map([
+    ["sif", true],
+    ["sellersprite", true],
+    ["sorftime", true]
+  ]);
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://127.0.0.1");
     const body = await readJsonBody(request);
@@ -163,9 +177,9 @@ async function startGatewayFixture() {
     };
     if (request.method === "GET" && url.pathname === "/api/mcp/servers") {
       return send({ servers: [
-        { id: "sif", label: "SIF", description: "SIF MCP", enabled: true },
-        { id: "sellersprite", label: "SellerSprite", description: "SellerSprite MCP", enabled: true },
-        { id: "sorftime", label: "Sorftime", description: "Sorftime MCP", enabled: true }
+        { id: "sif", label: "SIF", description: "SIF MCP", enabled: serverEnabled.get("sif") },
+        { id: "sellersprite", label: "SellerSprite", description: "SellerSprite MCP", enabled: serverEnabled.get("sellersprite") },
+        { id: "sorftime", label: "Sorftime", description: "Sorftime MCP", enabled: serverEnabled.get("sorftime") }
       ] });
     }
     if (request.method === "GET" && url.pathname === "/api/mcp/servers/sif/status") {
@@ -251,6 +265,9 @@ async function startGatewayFixture() {
     baseUrl: `http://127.0.0.1:${address.port}`,
     get lastTrace() {
       return lastTrace;
+    },
+    setServerEnabled(serverId, enabled) {
+      serverEnabled.set(serverId, enabled);
     },
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   };
