@@ -1,6 +1,6 @@
 {
   "name": "@xuanzhen-tech/agent-mcp-brick",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "通用 MCP 服务注册、渐进式发现与 AgentTool Provider 能力积木。",
   "type": "module",
   "repository": {

@@ -95,7 +95,10 @@ export class AgentMcp {
   get toolDescriptors() {
     this._assertReady();
     return this.#registry.registrations
-      .filter((registration) => registration.enabled)
+      .filter((registration) => (
+        registration.enabled
+        && this.#availableServers.get(registration.serverId)?.enabled === true
+      ))
       .map((registration) => createServerToolDescriptor(
         registration.serverId,
         this.#availableServers.get(registration.serverId)
@@ -505,7 +508,11 @@ export class AgentMcp {
   _resolveEnabledServerId(toolName) {
     const normalizedToolName = String(toolName ?? "").trim();
     const registration = this.#registry.registrations.find(
-      (item) => item.enabled && createServerToolName(item.serverId) === normalizedToolName
+      (item) => (
+        item.enabled
+        && this.#availableServers.get(item.serverId)?.enabled === true
+        && createServerToolName(item.serverId) === normalizedToolName
+      )
     );
     if (!registration) {
       throw new AgentMcpError("tool_unavailable", `MCP 工具未注册、已禁用或已删除: ${normalizedToolName}`);
